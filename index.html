@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#27ae60">
+
+<!-- iOS support -->
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<script>
+    if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("service-worker.js");
+    }
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mexican Train Scorecard</title>
+    <style>
+        :root {
+            --primary: #27ae60;
+            --secondary: #2c3e50;
+            --accent: #e67e22;
+            --bg: #f4f7f6;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h2 { color: var(--secondary); margin: 10px 0; font-size: 1.5rem; }
+
+        .controls { 
+            margin-bottom: 15px; 
+            display: flex; 
+            gap: 10px; 
+            width: 100%; 
+            justify-content: center;
+            position: sticky;
+            top: 0;
+            background: var(--bg);
+            padding: 10px 0;
+            z-index: 100;
+        }
+
+        .table-container {
+            width: 100%;
+            max-height: 70vh;
+            overflow: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            background: white;
+        }
+
+        table {
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 100%;
+        }
+
+        th, td {
+            border-right: 1px solid #ddd;
+            border-bottom: 1px solid #ddd;
+            padding: 12px 5px;
+            text-align: center;
+            min-width: 80px;
+            background-color: white;
+        }
+
+        /* --- THE "LOCK" LOGIC --- */
+
+        /* 1. Freeze the Top Rows (Names and Totals) */
+        #headerRow th {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            background-color: var(--primary);
+            color: white;
+        }
+
+        #totalRow td {
+            position: sticky;
+            top: 45px; /* Adjust based on header height */
+            z-index: 30;
+            background-color: var(--secondary);
+            color: white;
+            font-weight: bold;
+        }
+
+        /* 2. Freeze the First Column (Rd numbers) */
+        .round-col {
+            position: sticky;
+            left: 0;
+            z-index: 20;
+            background-color: #ecf0f1 !important;
+            color: var(--secondary);
+            font-weight: bold;
+            min-width: 60px;
+            border-right: 2px solid #bdc3c7;
+        }
+
+        /* 3. The "Master Lock": Intersection of frozen row and frozen column */
+        #headerRow th.round-col {
+            z-index: 40; /* Highest priority */
+            background-color: #219150 !important; 
+        }
+
+        #totalRow td.round-col {
+            z-index: 40; /* Highest priority */
+            background-color: #1a252f !important;
+        }
+
+        /* --- STYLING --- */
+        
+        .name-input {
+            background: transparent;
+            color: white;
+            font-weight: bold;
+            width: 100%;
+            border: none;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        input[type=number] {
+            width: 100%;
+            border: none;
+            text-align: center;
+            font-size: 1.1rem;
+            background: transparent;
+            outline: none;
+        }
+
+        input:focus { background-color: #e8f4fd; }
+
+        button {
+            padding: 12px 20px;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            flex: 1;
+            max-width: 150px;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>🚂 Mexican Train</h2>
+    
+    <div class="controls">
+        <button onclick="addPlayer()">+ Player</button>
+        <button onclick="resetScores()" style="background-color: var(--accent);">Reset All</button>
+    </div>
+
+    <div class="table-container">
+        <table id="scoreTable">
+            <thead>
+                <tr id="headerRow">
+                    <th class="round-col">Rd</th>
+                </tr>
+                <tr id="totalRow">
+                    <td class="round-col">TOT</td>
+                </tr>
+            </thead>
+            <tbody id="scoreBody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        let playerCount = 0;
+
+        window.onload = loadState;
+
+        function addPlayer(name = "") {
+            playerCount++;
+            const headerRow = document.getElementById('headerRow');
+            const th = document.createElement('th');
+            th.innerHTML = `<input type="text" class="name-input" placeholder="P${playerCount}" value="${name}" oninput="saveState()">`;
+            headerRow.appendChild(th);
+
+            const rows = document.getElementById('scoreBody').querySelectorAll('tr');
+            rows.forEach(row => {
+                const td = document.createElement('td');
+                td.innerHTML = `<input type="number" inputmode="numeric" value="0" oninput="updateAction()" onclick="this.select()">`;
+                row.appendChild(td);
+            });
+
+            const totalRow = document.getElementById('totalRow');
+            const totalTd = document.createElement('td');
+            totalTd.className = 'player-total';
+            totalTd.innerText = '0';
+            totalRow.appendChild(totalTd);
+            
+            calculateTotals();
+        }
+
+        function buildBaseTable() {
+            const scoreBody = document.getElementById('scoreBody');
+            scoreBody.innerHTML = ''; 
+            for (let i = 12; i >= 0; i--) {
+                let row = document.createElement('tr');
+                row.innerHTML = `<td class="round-col">${i}</td>`;
+                scoreBody.appendChild(row);
+            }
+        }
+
+        function updateAction() {
+            calculateTotals();
+            saveState();
+        }
+
+        function calculateTotals() {
+            const totals = Array(playerCount).fill(0);
+            const rows = document.getElementById('scoreBody').querySelectorAll('tr');
+            rows.forEach(row => {
+                const inputs = row.querySelectorAll('input[type="number"]');
+                inputs.forEach((input, index) => {
+                    totals[index] += parseInt(input.value) || 0;
+                });
+            });
+            const totalCells = document.querySelectorAll('.player-total');
+            totalCells.forEach((cell, index) => {
+                if (totals[index] !== undefined) cell.innerText = totals[index];
+            });
+        }
+
+        function saveState() {
+            const names = Array.from(document.querySelectorAll('.name-input')).map(input => input.value);
+            const scores = [];
+            const rows = document.getElementById('scoreBody').querySelectorAll('tr');
+            rows.forEach(row => {
+                const rowScores = Array.from(row.querySelectorAll('input[type="number"]')).map(input => input.value);
+                scores.push(rowScores);
+            });
+
+            const gameState = { playerCount, names, scores };
+            localStorage.setItem('mexicanTrainState', JSON.stringify(gameState));
+        }
+
+        function loadState() {
+            const saved = localStorage.getItem('mexicanTrainState');
+            buildBaseTable();
+            if (saved) {
+                const state = JSON.parse(saved);
+                state.names.forEach(name => addPlayer(name));
+                const rows = document.getElementById('scoreBody').querySelectorAll('tr');
+                rows.forEach((row, rowIndex) => {
+                    const inputs = row.querySelectorAll('input[type="number"]');
+                    inputs.forEach((input, colIndex) => {
+                        input.value = (state.scores[rowIndex] && state.scores[rowIndex][colIndex]) || 0;
+                    });
+                });
+                calculateTotals();
+            } else {
+                addPlayer(); 
+            }
+        }
+
+        function resetScores() {
+            if(confirm("Clear everything?")) {
+                localStorage.removeItem('mexicanTrainState');
+                location.reload(); 
+            }
+        }
+    </script>
+</body>
+</html>
